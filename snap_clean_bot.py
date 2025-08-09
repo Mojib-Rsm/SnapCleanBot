@@ -12,12 +12,19 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
-# --- Configuration ---
-TELEGRAM_BOT_TOKEN = '8428733956:AAFpRMPc5yL98m-HwMemSQ5w2lyjgYybMyM'
-REMOVE_BG_API_KEY = 'xHe7tNo1UGsXDcjgoz8gXDoQ'
-TELEGRAM_CHANNEL_URL = 'https://t.me/MrTools_BD'
-ADMIN_USER_ID = 1875687264  # <--- IMPORTANT: REPLACE with your personal Telegram User ID
-DEVELOPER_USERNAME = "@Mojibrsm"
+# --- Configuration (Loaded from Environment Variables) ---
+try:
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+    REMOVE_BG_API_KEY = os.getenv('REMOVE_BG_API_KEY')
+    ADMIN_USER_ID = int(os.getenv('ADMIN_USER_ID'))
+    TELEGRAM_CHANNEL_URL = os.getenv('TELEGRAM_CHANNEL_URL', 'https://t.me/MrTools_BD')
+    DEVELOPER_USERNAME = os.getenv('DEVELOPER_USERNAME', '@Mojibrsm')
+except (TypeError, ValueError) as e:
+    print(f"CRITICAL ERROR: Environment variable not set correctly - {e}. Please check your Railway variables.")
+    # Exit if critical variables are missing
+    if any(v is None for v in [TELEGRAM_BOT_TOKEN, REMOVE_BG_API_KEY, os.getenv('ADMIN_USER_ID')]):
+        exit()
+
 
 # --- Setup Logging ---
 logging.basicConfig(
@@ -37,6 +44,9 @@ def setup_bot_data(dispatcher):
 # --- Helper Function to track users ---
 def track_user(update: Update, context: CallbackContext):
     """Saves or updates user info for admin panel."""
+    if not update or not update.effective_user:
+        return # Cannot track user if no update/user object is present
+        
     user_id = update.effective_user.id
     if user_id not in context.bot_data['users']:
         context.bot_data['users'][user_id] = {
@@ -111,7 +121,7 @@ def donate_command(update: Update, context: CallbackContext) -> None:
     donate_text = (
         "Thank you for considering supporting SnapCleanBot! ❤️\n\n"
         "Your donations help cover server costs and API fees, keeping the bot running smoothly for everyone.\n\n"
-        "*(You can add your donation links here, e.g., PayPal, Patreon, or a crypto address)*"
+        "*(Donation links can be added here)*"
     )
     update.message.reply_text(donate_text)
 
@@ -120,8 +130,8 @@ def contact_command(update: Update, context: CallbackContext) -> None:
     contact_text = (
         "**Developer Contact**\n\n"
         "Feel free to reach out to the developer for any inquiries:\n\n"
-        "👤 **Name:** Mojib rsm\n"
-        "✈️ **Telegram:** {DEVELOPER_USERNAME}"
+        f"👤 **Name:** Mojib rsm\n"
+        f"✈️ **Telegram:** {DEVELOPER_USERNAME}"
     )
     update.message.reply_text(contact_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -151,17 +161,13 @@ def admin_command(update: Update, context: CallbackContext) -> None:
         f"**Recent Users:**\n"
     )
 
-    # List last 5 users for brevity
     recent_users = list(users_data.values())[-5:]
     for user in recent_users:
         admin_text += f"- {user.get('first_name')} (@{user.get('username')}) - Requests: {user.get('requests')}\n"
 
     update.message.reply_text(admin_text, parse_mode=ParseMode.MARKDOWN)
 
-# --- Settings Conversations ---
-
 def quality_command(update: Update, context: CallbackContext) -> int:
-    """Asks user to choose a quality."""
     track_user(update, context)
     keyboard = [
         [InlineKeyboardButton("Standard (Free)", callback_data='standard')],
@@ -172,18 +178,15 @@ def quality_command(update: Update, context: CallbackContext) -> int:
     return CHOOSING_QUALITY
 
 def quality_choice(update: Update, context: CallbackContext) -> int:
-    """Stores the quality choice."""
     query = update.callback_query
     query.answer()
     quality = query.data
-    context.user_data['quality'] = 'full' if quality == 'hd' else 'auto'
+    context.user_data['quality'] = '4k' if quality == 'hd' else 'auto' # Note: Use '4k' for HD as per API docs
     quality_text = "HD (4K)" if quality == 'hd' else "Standard"
-
-    query.edit_message_text(text=f"✅ Quality set to: **{quality_text}**")
+    query.edit_message_text(text=f"✅ Quality set to: **{quality_text}**", parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 def format_command(update: Update, context: CallbackContext) -> int:
-    """Asks user to choose a format."""
     track_user(update, context)
     keyboard = [
         [InlineKeyboardButton("PNG (Transparent)", callback_data='png')],
@@ -194,33 +197,28 @@ def format_command(update: Update, context: CallbackContext) -> int:
     return CHOOSING_FORMAT
 
 def format_choice(update: Update, context: CallbackContext) -> int:
-    """Stores the format choice."""
     query = update.callback_query
     query.answer()
     context.user_data['format'] = query.data
-    query.edit_message_text(text=f"✅ Format set to: **{query.data.upper()}**")
+    query.edit_message_text(text=f"✅ Format set to: **{query.data.upper()}**", parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
-
-# --- Core Functionality ---
 
 def remove_background_command(update: Update, context: CallbackContext) -> None:
     track_user(update, context)
 
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        update.message.reply_text("💡 **Hint:** Please reply to a photo with the `/remove` command.")
+        update.message.reply_text("💡 **Hint:** Please reply to a photo with the `/remove` command.", parse_mode=ParseMode.MARKDOWN)
         return
 
-    # Increment user's request count
     context.bot_data['users'][update.effective_user.id]['requests'] += 1
     
     processing_message = update.message.reply_text('✨ Processing your image, please wait...')
 
+    photo_path = f'{update.effective_chat.id}_input.jpg'
     try:
         photo_file = update.message.reply_to_message.photo[-1].get_file()
-        photo_path = f'{update.effective_chat.id}_input.jpg'
         photo_file.download(photo_path)
 
-        # Get user preferences or use defaults
         output_size = context.user_data.get('quality', 'auto')
         output_format = context.user_data.get('format', 'png')
 
@@ -243,7 +241,7 @@ def remove_background_command(update: Update, context: CallbackContext) -> None:
                     chat_id=update.effective_chat.id,
                     document=final_image,
                     filename=output_filename,
-                    caption=f'Here is your image! (Quality: {output_size.replace("auto", "Standard")}, Format: {output_format.upper()})'
+                    caption=f'Here is your image! (Quality: {output_size.replace("auto", "Standard").upper()}, Format: {output_format.upper()})'
                 )
             os.remove(output_filename)
         else:
@@ -262,20 +260,15 @@ def remove_background_command(update: Update, context: CallbackContext) -> None:
         )
 
 def cancel(update: Update, context: CallbackContext) -> int:
-    """Cancels and ends the conversation."""
     update.message.reply_text('Action cancelled.')
     return ConversationHandler.END
 
-# --- Main Bot Setup ---
 def main() -> None:
-    """Starts and runs the bot."""
     updater = Updater(TELEGRAM_BOT_TOKEN)
     dispatcher = updater.dispatcher
 
-    # Initialize bot data storage
     setup_bot_data(dispatcher)
 
-    # Conversation handlers for settings
     quality_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('quality', quality_command)],
         states={CHOOSING_QUALITY: [CallbackQueryHandler(quality_choice)]},
@@ -287,7 +280,6 @@ def main() -> None:
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # --- Register Command Handlers ---
     dispatcher.add_handler(CommandHandler("start", start_command))
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("about", about_command))
@@ -298,18 +290,12 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("join", join_command))
     dispatcher.add_handler(CommandHandler("admin", admin_command))
     dispatcher.add_handler(CommandHandler("remove", remove_background_command))
-    
-    # Add conversation handlers
     dispatcher.add_handler(quality_conv_handler)
     dispatcher.add_handler(format_conv_handler)
-    
-    # A generic message handler to guide users who just send a photo
     dispatcher.add_handler(MessageHandler(Filters.photo, lambda u,c: u.message.reply_text("Nice photo! Now reply to it with /remove to edit it.")))
 
-
-    # Start the Bot
     updater.start_polling()
-    print("SnapCleanBot is now running with advanced features...")
+    print("SnapCleanBot is now running...")
     updater.idle()
 
 if __name__ == '__main__':
