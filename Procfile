@@ -1,4 +1,1 @@
-/Mojib-Rsm-SnapCleanBot
-├── snap_clean_bot.py
-├── requirements.txt
-└── Procfile
+worker: python snap_clean_bot.py
